@@ -16,3 +16,4 @@ if __name__ == "__main__":
         print >>sys.stderr, repr(sys.argv)
         print >>sys.stderr
         traceback.print_exc(None, sys.stderr)
+        sys.exit(1)
