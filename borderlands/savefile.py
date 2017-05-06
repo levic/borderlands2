@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-
 import binascii
 from bisect import insort
 from cStringIO import StringIO
@@ -11,6 +10,69 @@ import random
 import struct
 import sys
 import os
+
+class AssetLibrary(object):
+
+    def __init__(self):
+        filename = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)),
+            'AssetLibrary.json'
+        )
+        with open(filename, 'r') as fp:
+            data = json.load(fp)
+
+        def extract_asset_lib(lib_name):
+            return {
+                'assets': {
+                    set_data['id']: set_data['libraries'][lib_name]['sublibraries']
+                    for set_data in data['sets']
+                },
+                'ignore': [
+                    (
+                        (1 << data['configs'][lib_name]['sublibrary_bits']) - 1,
+                        (1 << data['configs'][lib_name]['asset_bits']) - 1,
+                    ),
+                ],
+            }
+
+        self.manufacturers = extract_asset_lib('Manufacturers')
+        self.balance_defs = extract_asset_lib('BalanceDefs')
+        self.weapon_types = extract_asset_lib('WeaponTypes')
+        self.weapon_parts = extract_asset_lib('WeaponParts')
+        self.item_types = extract_asset_lib('ItemTypes')
+        self.item_parts = extract_asset_lib('ItemParts')
+
+    def _lookup(self, data, set_id, asset_lib):
+        if asset_lib is None:
+            return ''
+        if (asset_lib['lib'], asset_lib['asset']) in data['ignore']:
+            return ''
+
+        try:
+            x = data['assets'][set_id][asset_lib['lib']]['assets'][asset_lib['asset']]
+            # enable the following for short asset names
+            x = '.'.join(x.split('.')[-2:])
+            return x
+        except IndexError:
+            return '%(lib)d.%(asset)d' % asset_lib
+
+    def get_manufacturer(self, set_id, asset_lib):
+        return self._lookup(self.manufacturers, set_id, asset_lib)
+
+    def get_balance_type(self, set_id, asset_lib):
+        return self._lookup(self.balance_defs, set_id, asset_lib)
+
+    def get_weapon_type(self, set_id, asset_lib):
+        return self._lookup(self.weapon_types, set_id, asset_lib)
+
+    def get_weapon_part(self, set_id, asset_lib):
+        return self._lookup(self.weapon_parts, set_id, asset_lib)
+
+    def get_item_type(self, set_id, asset_lib):
+        return self._lookup(self.item_types, set_id, asset_lib)
+
+    def get_item_part(self, set_id, asset_lib):
+        return self._lookup(self.item_parts, set_id, asset_lib)
 
 class Config(argparse.Namespace):
     """
@@ -1313,13 +1375,14 @@ class App(object):
 
         return self.wrap_player_data(self.write_protobuf(player))
 
-    def export_items(self, data, output):
+    def export_items(self, data, output, extended_output):
         """
         Exports items stored in savegame data 'data' to the open
         filehandle 'output'
         """
         player = self.read_protobuf(self.unwrap_player_data(data))
         skipped_count = 0
+        assets = AssetLibrary() if extended_output else None
         for i, name in ((41, "Bank"), (53, "Items"), (54, "Weapons")):
             count = 0
             content = player.get(i)
@@ -1341,13 +1404,35 @@ class App(object):
                 # no real reason to export them since they're not real items and
                 # don't contain any information.  So, we're going to skip them.
                 is_weapon, item, key = self.unwrap_item(raw)
+                item_info = self.unwrap_item_info(raw)
                 if item[0] == 255 and not any([val != 0 for val in item[1:]]):
                     skipped_count += 1
                 else:
                     count += 1
                     raw = self.replace_raw_item_key(raw, 0)
                     code = '%s(%s)' % (self.item_prefix, raw.encode("base64").strip())
-                    print >>output, code
+                    if extended_output:
+                        set_id = item_info['set']
+                        if is_weapon:
+                            type_lookup = assets.get_weapon_type
+                            part_lookup = assets.get_weapon_part
+                        else:
+                            type_lookup = assets.get_item_type
+                            part_lookup = assets.get_item_part
+                        data = [
+                            '',
+                            str(set_id),
+                            'weapon' if item_info['is_weapon'] else 'item',
+                            assets.get_balance_type(set_id, item_info['balance']),
+                            type_lookup(set_id, item_info['type']),
+                            str(item_info['level'][1]),
+                            assets.get_manufacturer(set_id, item_info['manufacturer']),
+                        ] + [part_lookup(set_id, part) for part in item_info['parts']]
+                        #data = ['.'.join(x.split('.')[-2:]) for x in data]
+                        extra = ','.join(data)
+                    else:
+                        extra = ''
+                    print >>output, code + extra
             self.debug(' - %s exported: %d' % (name, count))
         self.debug(' - Empty items skipped: %d' % (skipped_count))
 
@@ -1438,7 +1523,7 @@ class App(object):
         # Optional args
 
         parser.add_argument('-o', '--output',
-                choices=['savegame', 'decoded', 'decodedjson', 'json', 'items'],
+                choices=['savegame', 'decoded', 'decodedjson', 'json', 'items', 'itemscsv'],
                 default='savegame',
                 help='Output file format.  The most useful to humans are: savegame, json, and items',
                 )
@@ -1641,9 +1726,9 @@ class App(object):
             output_file = open(config.output_filename, 'wb')
 
         # Now output based on what we've been told to do
-        if config.output == 'items':
+        if config.output == 'items' or config.output == 'itemscsv':
             self.debug('Exporting items')
-            self.export_items(save_data, output_file)
+            self.export_items(save_data, output_file, extended_output=config.output == 'itemscsv')
         elif config.output == 'savegame':
             self.debug('Writing savegame file')
             output_file.write(save_data)

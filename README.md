@@ -54,6 +54,9 @@ most useful outputs are:
 * **`items`** - This will save the character's inventory and bank into a text
   file which can then be imported into other tools like Gibbed, or imported
   into other characters using this tool.
+* **`csv`** - A hybrid of `items` and `json`, this is helpful for building a
+  spreadsheet of known items. For BL2 (but not BLTPS) it outputs symbolic names
+  for item parts rather than internal borderlands asset IDs.
 
 For example, saving to a JSON file for later hand-editing:
 
@@ -78,6 +81,9 @@ To later import the items in `items.txt` to a savegame, use the `-i` or
 
 *(note that the savefile with the imported items is `new.sav` - You'd have
 to copy that back over to `save0002.sav` afterwards)*
+
+CSV format output cannot be directly imported; you should paste the item codes
+into a text file and use the `-i` method
 
 ## Other Output Formats
 
